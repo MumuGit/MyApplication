@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.Dialog;
 import android.graphics.Bitmap;
 import android.support.v4.view.PagerAdapter;
+import android.util.Log;
 import android.view.Display;
 import android.view.View;
 import android.view.ViewGroup;
@@ -18,6 +19,8 @@ import java.util.List;
 /**
  * 查看大图
  */
+
+
 public class ImagPagerUtil {
     private List<String> mPicList;
     private Activity mActivity;
@@ -39,11 +42,13 @@ public class ImagPagerUtil {
             mPicList.add(picarr[i]);
         }
         this.mActivity = activity;
-        init();
+       init();
     }
 
     public void show() {
+
         dialog.show();
+        Log.i("muqi"," dialog.show()");
     }
 
     private void init() {
@@ -60,7 +65,7 @@ public class ImagPagerUtil {
         int size = mPicList.size();
         ArrayList<ImageView> imageViews = new ArrayList<>();
         ZoomImageView imageView = new ZoomImageView(mActivity);
-        imageView.measure(0, 0);
+        //imageView.measure(0, 0);//?
         Display display = mActivity.getWindowManager().getDefaultDisplay();
         screenWidth = display.getWidth();
         ViewGroup.MarginLayoutParams marginLayoutParams = new ViewGroup.MarginLayoutParams(screenWidth, display.getHeight());
@@ -69,6 +74,8 @@ public class ImagPagerUtil {
             @Override
             public void onClick(View v) {
                 dialog.dismiss();
+                Log.i("muqi"," dialog.dismiss()");
+
             }
         });
         for (int i = 0; i < size; i++) {
@@ -127,16 +134,18 @@ public class ImagPagerUtil {
     private void showPic(final ImageView imageView, String url) {
 
 
-        PromptManager.showLoadingDialog(mActivity);
+       PromptManager.showLoadingDialog(mActivity);
         ImageUtils.displayImageFromUrlWithListener(mActivity, url, imageView, new ImageUtils.OnLoadFinishListener() {
 
             @Override
             public void finsish(Bitmap bm) {
-                imageView.setImageBitmap(bm);
-                PromptManager.closeLoadingDialog();
+                //imageView.setImageBitmap(bm);
+               PromptManager.closeLoadingDialog();
             }
         });
-        dialog.show();
+        Log.i("muqi"," dialog.show()2");
+
+        //dialog.show();
     }
 
 

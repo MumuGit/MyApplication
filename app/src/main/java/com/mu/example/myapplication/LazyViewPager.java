@@ -63,6 +63,9 @@ import java.util.Comparator;
  * the compatibility library, requiring changes to the source code
  * of apps when they are compiled against the newer version.</p>
  */
+/**
+ *问题：1.在第一张的位置右拉，松手后却自动滑到了第二张
+ */
 public class LazyViewPager extends ViewGroup {
     private static final String TAG = "LazyViewPager";
     private static final boolean DEBUG = false;
@@ -89,7 +92,7 @@ public class LazyViewPager extends ViewGroup {
             // _o(t) = t * t * ((tension + 1) * t + tension)
             // o(t) = _o(t - 1) + 1
             t -= 1.0f;
-            return t * t * t + 1.0f;
+            return t * t * t + 1.0f;//?
         }
     };
 
@@ -245,17 +248,162 @@ public class LazyViewPager extends ViewGroup {
         final Context context = getContext();
         mScroller = new Scroller(context, sInterpolator);
         final ViewConfiguration configuration = ViewConfiguration.get(context);
-        mTouchSlop = ViewConfigurationCompat.getScaledPagingTouchSlop(configuration);
+//        mTouchSlop = ViewConfigurationCompat.getScaledPagingTouchSlop(configuration);
+        mTouchSlop =configuration.getScaledPagingTouchSlop();
         mMinimumVelocity = configuration.getScaledMinimumFlingVelocity();
         mMaximumVelocity = configuration.getScaledMaximumFlingVelocity();
         mLeftEdge = new EdgeEffectCompat(context);
         mRightEdge = new EdgeEffectCompat(context);
 
         float density = context.getResources().getDisplayMetrics().density;
-        mBaseLineFlingVelocity = 2500.0f * density;
-        mFlingVelocityInfluence = 0.4f;
+        mBaseLineFlingVelocity = 2500.0f * density;//?
+        mFlingVelocityInfluence = 0.4f;//?
     }
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        // For simple implementation, or internal size is always 0.
+        // We depend on the container to specify the layout size of
+        // our view.  We can't really know what it is since we will be
+        // adding and removing different arbitrary views and do not
+        // want the layout to change as this happens.
+        setMeasuredDimension(getDefaultSize(0, widthMeasureSpec),
+                getDefaultSize(0, heightMeasureSpec));
 
+        // Children are just made to fill our space.
+        mChildWidthMeasureSpec = MeasureSpec.makeMeasureSpec(getMeasuredWidth() -
+                getPaddingLeft() - getPaddingRight(), MeasureSpec.EXACTLY);
+        mChildHeightMeasureSpec = MeasureSpec.makeMeasureSpec(getMeasuredHeight() -
+                getPaddingTop() - getPaddingBottom(), MeasureSpec.EXACTLY);
+
+        // Make sure we have created all fragments that we need to have shown.
+        mInLayout = true;
+        populate();
+        mInLayout = false;
+
+        // Make sure all children have been properly measured.
+        final int size = getChildCount();
+        for (int i = 0; i < size; ++i) {
+            final View child = getChildAt(i);
+            if (child.getVisibility() != GONE) {
+                if (DEBUG) Log.v(TAG, "Measuring #" + i + " " + child
+                        + ": " + mChildWidthMeasureSpec);
+                child.measure(mChildWidthMeasureSpec, mChildHeightMeasureSpec);
+            }
+        }
+    }
+    void populate() {
+        if (mAdapter == null) {
+            return;
+        }
+
+        // Bail now if we are waiting to populate.  This is to hold off
+        // on creating views from the time the user releases their finger to
+        // fling to a new position until we have finished the scroll to
+        // that position, avoiding glitches from happening at that point.
+        if (mPopulatePending) {
+            if (DEBUG) Log.i(TAG, "populate is pending, skipping for now...");
+            return;
+        }
+
+        // Also, don't populate until we are attached to a window.  This is to
+        // avoid trying to populate before we have restored our view hierarchy
+        // state and conflicting with what is restored.
+        if (getWindowToken() == null) {
+            return;
+        }
+
+        mAdapter.startUpdate(this);
+
+        final int pageLimit = mOffscreenPageLimit;
+        final int startPos = Math.max(0, mCurItem - pageLimit);
+        final int N = mAdapter.getCount();
+        final int endPos = Math.min(N - 1, mCurItem + pageLimit);
+
+        if (DEBUG) Log.v(TAG, "populating: startPos=" + startPos + " endPos=" + endPos);
+
+        // Add and remove pages in the existing list.
+        int lastPos = -1;
+        for (int i=0; i<mItems.size(); i++) {
+            ItemInfo ii = mItems.get(i);
+            if ((ii.position < startPos || ii.position > endPos) && !ii.scrolling) {
+                if (DEBUG) Log.i(TAG, "removing: " + ii.position + " @ " + i);
+                mItems.remove(i);
+                i--;
+                mAdapter.destroyItem(this, ii.position, ii.object);
+            } else if (lastPos < endPos && ii.position > startPos) {
+                // The next item is outside of our range, but we have a gap
+                // between it and the last item where we want to have a page
+                // shown.  Fill in the gap.
+                lastPos++;
+                if (lastPos < startPos) {
+                    lastPos = startPos;
+                }
+                while (lastPos <= endPos && lastPos < ii.position) {
+                    if (DEBUG) Log.i(TAG, "inserting: " + lastPos + " @ " + i);
+                    addNewItem(lastPos, i);
+                    lastPos++;
+                    i++;
+                }
+            }
+            lastPos = ii.position;
+        }
+
+        // Add any new pages we need at the end.
+        lastPos = mItems.size() > 0 ? mItems.get(mItems.size()-1).position : -1;
+        if (lastPos < endPos) {
+            lastPos++;
+            lastPos = lastPos > startPos ? lastPos : startPos;
+            while (lastPos <= endPos) {
+                if (DEBUG) Log.i(TAG, "appending: " + lastPos);
+                addNewItem(lastPos, -1);
+                lastPos++;
+            }
+        }
+
+        if (DEBUG) {
+            Log.i(TAG, "Current page list:");
+            for (int i=0; i<mItems.size(); i++) {
+                Log.i(TAG, "#" + i + ": page " + mItems.get(i).position);
+            }
+        }
+
+        ItemInfo curItem = null;
+        for (int i=0; i<mItems.size(); i++) {
+            if (mItems.get(i).position == mCurItem) {
+                curItem = mItems.get(i);
+                break;
+            }
+        }
+        mAdapter.setPrimaryItem(this, mCurItem, curItem != null ? curItem.object : null);
+
+        mAdapter.finishUpdate(this);
+
+        if (hasFocus()) {
+            View currentFocused = findFocus();
+            ItemInfo ii = currentFocused != null ? infoForAnyChild(currentFocused) : null;
+            if (ii == null || ii.position != mCurItem) {
+                for (int i=0; i<getChildCount(); i++) {
+                    View child = getChildAt(i);
+                    ii = infoForChild(child);
+                    if (ii != null && ii.position == mCurItem) {
+                        if (child.requestFocus(FOCUS_FORWARD)) {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+     //=============================================以上为流程方法========================================================
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+
+        // Make sure scroll position is set correctly.
+        if (w != oldw) {
+            recomputeScrollPosition(w, oldw, mPageMargin, mPageMargin);
+        }
+    }
     private void setScrollState(int newState) {
         if (mScrollState == newState) {
             return;
@@ -608,109 +756,7 @@ public class LazyViewPager extends ViewGroup {
         }
     }
 
-    void populate() {
-        if (mAdapter == null) {
-            return;
-        }
 
-        // Bail now if we are waiting to populate.  This is to hold off
-        // on creating views from the time the user releases their finger to
-        // fling to a new position until we have finished the scroll to
-        // that position, avoiding glitches from happening at that point.
-        if (mPopulatePending) {
-            if (DEBUG) Log.i(TAG, "populate is pending, skipping for now...");
-            return;
-        }
-
-        // Also, don't populate until we are attached to a window.  This is to
-        // avoid trying to populate before we have restored our view hierarchy
-        // state and conflicting with what is restored.
-        if (getWindowToken() == null) {
-            return;
-        }
-
-        mAdapter.startUpdate(this);
-
-        final int pageLimit = mOffscreenPageLimit;
-        final int startPos = Math.max(0, mCurItem - pageLimit);
-        final int N = mAdapter.getCount();
-        final int endPos = Math.min(N - 1, mCurItem + pageLimit);
-
-        if (DEBUG) Log.v(TAG, "populating: startPos=" + startPos + " endPos=" + endPos);
-
-        // Add and remove pages in the existing list.
-        int lastPos = -1;
-        for (int i=0; i<mItems.size(); i++) {
-            ItemInfo ii = mItems.get(i);
-            if ((ii.position < startPos || ii.position > endPos) && !ii.scrolling) {
-                if (DEBUG) Log.i(TAG, "removing: " + ii.position + " @ " + i);
-                mItems.remove(i);
-                i--;
-                mAdapter.destroyItem(this, ii.position, ii.object);
-            } else if (lastPos < endPos && ii.position > startPos) {
-                // The next item is outside of our range, but we have a gap
-                // between it and the last item where we want to have a page
-                // shown.  Fill in the gap.
-                lastPos++;
-                if (lastPos < startPos) {
-                    lastPos = startPos;
-                }
-                while (lastPos <= endPos && lastPos < ii.position) {
-                    if (DEBUG) Log.i(TAG, "inserting: " + lastPos + " @ " + i);
-                    addNewItem(lastPos, i);
-                    lastPos++;
-                    i++;
-                }
-            }
-            lastPos = ii.position;
-        }
-
-        // Add any new pages we need at the end.
-        lastPos = mItems.size() > 0 ? mItems.get(mItems.size()-1).position : -1;
-        if (lastPos < endPos) {
-            lastPos++;
-            lastPos = lastPos > startPos ? lastPos : startPos;
-            while (lastPos <= endPos) {
-                if (DEBUG) Log.i(TAG, "appending: " + lastPos);
-                addNewItem(lastPos, -1);
-                lastPos++;
-            }
-        }
-
-        if (DEBUG) {
-            Log.i(TAG, "Current page list:");
-            for (int i=0; i<mItems.size(); i++) {
-                Log.i(TAG, "#" + i + ": page " + mItems.get(i).position);
-            }
-        }
-
-        ItemInfo curItem = null;
-        for (int i=0; i<mItems.size(); i++) {
-            if (mItems.get(i).position == mCurItem) {
-                curItem = mItems.get(i);
-                break;
-            }
-        }
-        mAdapter.setPrimaryItem(this, mCurItem, curItem != null ? curItem.object : null);
-
-        mAdapter.finishUpdate(this);
-
-        if (hasFocus()) {
-            View currentFocused = findFocus();
-            ItemInfo ii = currentFocused != null ? infoForAnyChild(currentFocused) : null;
-            if (ii == null || ii.position != mCurItem) {
-                for (int i=0; i<getChildCount(); i++) {
-                    View child = getChildAt(i);
-                    ii = infoForChild(child);
-                    if (ii != null && ii.position == mCurItem) {
-                        if (child.requestFocus(FOCUS_FORWARD)) {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     public static class SavedState extends BaseSavedState {
         int position;
@@ -835,48 +881,7 @@ public class LazyViewPager extends ViewGroup {
         mFirstLayout = true;
     }
 
-    @Override
-    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        // For simple implementation, or internal size is always 0.
-        // We depend on the container to specify the layout size of
-        // our view.  We can't really know what it is since we will be
-        // adding and removing different arbitrary views and do not
-        // want the layout to change as this happens.
-        setMeasuredDimension(getDefaultSize(0, widthMeasureSpec),
-                getDefaultSize(0, heightMeasureSpec));
 
-        // Children are just made to fill our space.
-        mChildWidthMeasureSpec = MeasureSpec.makeMeasureSpec(getMeasuredWidth() -
-                getPaddingLeft() - getPaddingRight(), MeasureSpec.EXACTLY);
-        mChildHeightMeasureSpec = MeasureSpec.makeMeasureSpec(getMeasuredHeight() -
-                getPaddingTop() - getPaddingBottom(), MeasureSpec.EXACTLY);
-
-        // Make sure we have created all fragments that we need to have shown.
-        mInLayout = true;
-        populate();
-        mInLayout = false;
-
-        // Make sure all children have been properly measured.
-        final int size = getChildCount();
-        for (int i = 0; i < size; ++i) {
-            final View child = getChildAt(i);
-            if (child.getVisibility() != GONE) {
-                if (DEBUG) Log.v(TAG, "Measuring #" + i + " " + child
-                        + ": " + mChildWidthMeasureSpec);
-                child.measure(mChildWidthMeasureSpec, mChildHeightMeasureSpec);
-            }
-        }
-    }
-
-    @Override
-    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-        super.onSizeChanged(w, h, oldw, oldh);
-
-        // Make sure scroll position is set correctly.
-        if (w != oldw) {
-            recomputeScrollPosition(w, oldw, mPageMargin, mPageMargin);
-        }
-    }
 
     private void recomputeScrollPosition(int width, int oldWidth, int margin, int oldMargin) {
         final int widthWithMargin = width + margin;
